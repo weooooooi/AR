@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A black-outlined pixelated avatar</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+      padding: 10px;
+      height: 100vh;
+      background: linear-gradient(45deg, #9500FF, #FF005C);
+      box-sizing: border-box;
+    }
+    .container {
+      display: flex;
+      flex-direction: column; 
+      align-items: margin; 
+      width: auto;
+    }
+    video {
+      border: 2px solid black;
+      margin-bottom: 10px; 
+      width: 50px; 
+      height: 50px;
+      background-color: white;
+    }
+    canvas {
+      border: 2px solid black;
+      margin: 0;
+      width: 250px;
+      height: 250px;
+      background-color: white;
+    }
+    .controls {
+      margin-top: 10px;
+      text-align: center;
+      width: 100%;
+      max-width: 400px;
+    }
+    .controls label {
+      margin-right: 10px;
+    }
+    button {
+      margin-top: 10px;
+      padding: 10px;
+      font-size: 16px;
+      width: 85px;
+      border-radius: 21.25px;
+    }
+    #switchCamera {
+      background-color: #00EA00;
+      color: white;
+    }
+    #download {
+      background-color: #004FFF;
+      color: white;
+      font-size: 12px;
+      width: 40px;
+      border-radius: 20px;
+    }
+    progress {
+      width: 100%;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas" width="300" height="300"></canvas>
+  </div>
+  <div class="controls">
+    <label>
+      Quantities:
+      <input type="range" id="blockSize" min="5" max="30" value="10">
+    </label>
+    <span id="blockSizeValue">10</span>
+    <br>
+    <label>
+      Detection:
+      <input type="range" id="edgeThreshold" min="10" max="200" value="100">
+    </label>
+    <span id="edgeThresholdValue">100</span>
+    <br>
+    <label>
+      Threshold:
+      <input type="range" id="bgSeparationThreshold" min="0" max="255" value="40">
+    </label>
+    <span id="bgSeparationThresholdValue">40</span>
+    <br>
+    <label>
+      A color:
+      <input type="color" id="edgeColor" value="#C000FF">
+    </label>
+    <br>
+    <label>
+      B color:
+      <input type="color" id="bgColor" value="#00FF55">
+    </label>
+    <progress id="progressBar" value="0" max="100"></progress>
+    <button id="switchCamera">SWITCH</button>
+    <button id="download">⬇</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const downloadButton = document.getElementById('download');
+    const switchCameraButton = document.getElementById('switchCamera');
+    const blockSizeInput = document.getElementById('blockSize');
+    const edgeThresholdInput = document.getElementById('edgeThreshold');
+    const bgSeparationThresholdInput = document.getElementById('bgSeparationThreshold');
+    const edgeColorInput = document.getElementById('edgeColor');
+    const bgColorInput = document.getElementById('bgColor');
+    const blockSizeValue = document.getElementById('blockSizeValue');
+    const edgeThresholdValue = document.getElementById('edgeThresholdValue');
+    const bgSeparationThresholdValue = document.getElementById('bgSeparationThresholdValue');
+    const progressBar = document.getElementById('progressBar');
+
+    let blockSize = parseInt(blockSizeInput.value, 10);
+    let edgeThreshold = parseInt(edgeThresholdInput.value, 10);
+    let bgSeparationThreshold = parseInt(bgSeparationThresholdInput.value, 10);
+    let edgeColor = edgeColorInput.value;
+    let bgColor = bgColorInput.value;
+    let usingFrontCamera = true;
+
+    blockSizeInput.addEventListener('input', () => {
+      blockSize = parseInt(blockSizeInput.value, 10);
+      blockSizeValue.textContent = blockSize;
+    });
+
+    edgeThresholdInput.addEventListener('input', () => {
+      edgeThreshold = parseInt(edgeThresholdInput.value, 10);
+      edgeThresholdValue.textContent = edgeThreshold;
+    });
+
+    bgSeparationThresholdInput.addEventListener('input', () => {
+      bgSeparationThreshold = parseInt(bgSeparationThresholdInput.value, 10);
+      bgSeparationThresholdValue.textContent = bgSeparationThreshold;
+    });
+
+    edgeColorInput.addEventListener('input', () => {
+      edgeColor = edgeColorInput.value;
+    });
+
+    bgColorInput.addEventListener('input', () => {
+      bgColor = bgColorInput.value;
+    });
+
+    async function startCamera(front = true) {
+      try {
+        const constraints = {
+          video: { 
+            width: 300, 
+            height: 300, 
+            facingMode: front ? 'user' : 'environment' 
+          }
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+      } catch (err) {
+        alert("Unable to access the camera. Please check the permission settings or device connection.");
+        console.error("Camera error", err);
+      }
+    }
+
+    function processVideoFrame() {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (usingFrontCamera) {
+          ctx.save();
+          ctx.scale(-1, 1);
+          ctx.translate(-canvas.width, 0);
+        }
+
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        if (usingFrontCamera) {
+          ctx.restore();
+        }
+
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const pixels = imageData.data;
+
+        const bgColorRGB = hexToRGB(bgColor);
+        let totalBlocks = 0;
+        let processedBlocks = 0;
+
+        for (let y = 0; y < canvas.height; y += blockSize) {
+          for (let x = 0; x < canvas.width; x += blockSize) {
+            totalBlocks++;
+            let rSum = 0, gSum = 0, bSum = 0, count = 0;
+
+            for (let dy = 0; dy < blockSize; dy++) {
+              for (let dx = 0; dx < blockSize; dx++) {
+                const px = 4 * ((y + dy) * canvas.width + (x + dx));
+                if (px < pixels.length) {
+                  rSum += pixels[px];
+                  gSum += pixels[px + 1];
+                  bSum += pixels[px + 2];
+                  count++;
+                }
+              }
+            }
+
+            const rAvg = rSum / count;
+            const gAvg = gSum / count;
+            const bAvg = bSum / count;
+            const gray = 0.3 * rAvg + 0.59 * gAvg + 0.11 * bAvg;
+
+            const isBackground = Math.abs(rAvg - bgColorRGB.r) < bgSeparationThreshold &&
+                                 Math.abs(gAvg - bgColorRGB.g) < bgSeparationThreshold &&
+                                 Math.abs(bAvg - bgColorRGB.b) < bgSeparationThreshold;
+
+            const isEdge = !isBackground && gray < edgeThreshold;
+
+            ctx.fillStyle = isEdge ? edgeColor : bgColor;
+            ctx.fillRect(x, y, blockSize, blockSize);
+
+            processedBlocks++;
+            progressBar.value = (processedBlocks / totalBlocks) * 100;
+          }
+        }
+      }
+
+      requestAnimationFrame(processVideoFrame);
+    }
+
+    function hexToRGB(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      return {
+        r: (bigint >> 16) & 255,
+        g: (bigint >> 8) & 255,
+        b: bigint & 255
+      };
+    }
+
+    downloadButton.addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.download = 'pixel_avatar_no_bg.png';
+      link.href = canvas.toDataURL();
+      link.click();
+    });
+
+    switchCameraButton.addEventListener('click', () => {
+      usingFrontCamera = !usingFrontCamera;
+      startCamera(usingFrontCamera);
+    });
+
+    startCamera();
+    video.addEventListener('play', processVideoFrame);
+  </script>
+</body>
+</html>
